@@ -2,14 +2,19 @@
 from openai import OpenAI
 from tools import get_projects, add_lead_to_crm, send_otp, verify_otp
 from system_prompt import SYSTEM_PROMPT
+from conversation_logger import log_conversation
 import json
 import re
+import uuid
 
 client = OpenAI()
 
 # -----------------------
 # MEMORY & LEAD STATE
 # -----------------------
+
+# Generate unique session ID
+session_id = str(uuid.uuid4())
 
 conversation_history = []
 conversation_stage = "INITIAL"  # INITIAL, NAME_COLLECTED, PHONE_COLLECTED, OTP_SENT, VERIFIED, REQUIREMENT_GATHERING
@@ -279,6 +284,15 @@ def run_conversation(user_prompt):
             })
 
         conversation_history.append({"role": "assistant", "content": ai_reply})
+        
+        # Log conversation with timestamp
+        log_conversation(
+            session_id=session_id,
+            user_message=user_prompt,
+            ai_response=ai_reply,
+            lead_data=lead_data
+        )
+        
         return ai_reply
 
     except Exception as e:

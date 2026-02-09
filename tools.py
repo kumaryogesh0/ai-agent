@@ -23,16 +23,26 @@ def get_projects(search_query=""):
             for p in projects:
                 bhk_options = [b.get("bhktype") for b in p.get("typebhk", [])]
                 
-                # Extract images
+                # Extract images from bannerimg array
                 images = []
-                if p.get("projectImages"):
-                    for img in p.get("projectImages", [])[:5]:  # Get first 5 images
-                        if img.get("name"):
-                            images.append(f"https://www.amoghbuildtech.com/_next/image?url=/api/images/{img['name']}&w=3840&q=75")
+                banner_images = p.get("bannerimg", [])
+                for img_name in banner_images[:8]:  # Get up to 8 images
+                    if img_name:
+                        # Direct API URL without Next.js image optimization
+                        images.append(f"https://www.amoghbuildtech.com/api/images/{img_name}")
                 
-                # Build project link with slug
-                project_slug = p.get("slug", "")
-                project_link = f"https://www.amoghbuildtech.com/projects/{project_slug}" if project_slug else None
+                # Also get floor plans, site plans, and site maps
+                floor_plans = []
+                for fp in p.get("typebhk", []):
+                    if fp.get("img"):
+                        floor_plans.append({
+                            "type": fp.get("bhktype"),
+                            "url": f"https://www.amoghbuildtech.com/api/images/{fp['img']}"
+                        })
+                
+                site_plans = [f"https://www.amoghbuildtech.com/api/images/{sp}" for sp in p.get("sitePlan", []) if sp]
+                site_maps = [f"https://www.amoghbuildtech.com/api/images/{sm}" for sm in p.get("siteMap", []) if sm]
+                
                 
                 info = {
                     "id": p.get("_id"),
@@ -45,7 +55,18 @@ def get_projects(search_query=""):
                     "possession": p.get("possession"),
                     "size": p.get("projectarea", "N/A"),
                     "images": images,
-                    "amenities": p.get("amenities", [])[:10]  # First 10 amenities
+                    "floor_plans": floor_plans,
+                    "site_plans": site_plans,
+                    "site_maps": site_maps,
+                    "amenities": p.get("amenities", [])[:20],  # First 20 amenities IDs
+                    "key_features": p.get("keyfeatures", []),
+                    "highlights": p.get("highlight", []),
+                    "rera_id": p.get("reraId", "N/A"),
+                    "status": p.get("status", "N/A"),
+                    "towers": p.get("towers", "N/A"),
+                    "units": p.get("units", "N/A"),
+                    "floors": p.get("floors", []),
+                    "total_area": p.get("totalProjectArea", {})
                 }
                 processed_data.append(info)
             
