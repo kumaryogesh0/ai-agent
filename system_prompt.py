@@ -212,7 +212,7 @@ Extract image URLs from project data and display:
       "component": "ImageGallery",
       "props": {{
         "images": [
-          "https://www.amoghbuildtech.com/_next/image?url=/api/images/[IMAGE_ID]&w=3840&q=75"
+          "https://www.amoghbuildtech.com/api/images/[IMAGE_ID]&w=3840&q=75"
         ],
         "projectName": "Project Name"
       }}
