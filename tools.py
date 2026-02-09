@@ -1,13 +1,14 @@
 # tools.py
 import requests
 import json
+import random
 
 def get_projects(search_query=""):
     """Fetch all projects from API"""
     url = f"https://www.amoghbuildtech.com/api/projects?search={search_query}&page=1&pageSize=1000&propertyCategory=All&country=india&isComplete=true&priceRange=all"
     
     try:
-        print("🔄 Fetching projects from API...")
+        print("📄 Fetching projects from API...")
         response = requests.get(url, timeout=10)
         
         if response.status_code == 200:
@@ -21,13 +22,30 @@ def get_projects(search_query=""):
             processed_data = []
             for p in projects:
                 bhk_options = [b.get("bhktype") for b in p.get("typebhk", [])]
+                
+                # Extract images
+                images = []
+                if p.get("projectImages"):
+                    for img in p.get("projectImages", [])[:5]:  # Get first 5 images
+                        if img.get("name"):
+                            images.append(f"https://www.amoghbuildtech.com/_next/image?url=/api/images/{img['name']}&w=3840&q=75")
+                
+                # Build project link with slug
+                project_slug = p.get("slug", "")
+                project_link = f"https://www.amoghbuildtech.com/projects/{project_slug}" if project_slug else None
+                
                 info = {
                     "id": p.get("_id"),
                     "name": p.get("name"),
-                    "location": f"{p.get('city')}, Sector {p.get('slug').split('-')[-2]}",
+                    "slug": project_slug,
+                    "link": project_link,
+                    "location": f"{p.get('city')}, Sector {p.get('slug').split('-')[-2] if '-' in p.get('slug', '') else 'N/A'}",
                     "price_range": p.get("price"),
                     "configurations": bhk_options,
-                    "possession": p.get("possession")
+                    "possession": p.get("possession"),
+                    "size": p.get("projectarea", "N/A"),
+                    "images": images,
+                    "amenities": p.get("amenities", [])[:10]  # First 10 amenities
                 }
                 processed_data.append(info)
             
@@ -87,9 +105,6 @@ def add_lead_to_crm(name, phone, project_id, remarks="Customer showed interest v
         
         if response.status_code == 201:
             print(f"\n✅ [SUCCESS] Lead added to CRM")
-            print(f"   Name: {name}")
-            print(f"   Phone: {phone}")
-            print(f"   Project ID: {project_id}")
             return {
                 "status": "success", 
                 "message": "Lead successfully added to CRM",
@@ -97,21 +112,86 @@ def add_lead_to_crm(name, phone, project_id, remarks="Customer showed interest v
             }
         else:
             print(f"\n❌ [ERROR] Failed to add lead")
-            print(f"   Status Code: {response.status_code}")
             return {
                 "status": "error", 
                 "message": f"Failed with status {response.status_code}",
                 "response": response.text[:200]
             }
             
-    except requests.exceptions.Timeout:
-        print(f"\n⏱️ [TIMEOUT] Request timed out")
-        return {"status": "error", "message": "Request timed out"}
-        
-    except requests.exceptions.ConnectionError:
-        print(f"\n🔌 [CONNECTION ERROR] Could not connect to CRM")
-        return {"status": "error", "message": "Connection error"}
-        
     except Exception as e:
         print(f"\n⚠️ [EXCEPTION] {str(e)}")
         return {"status": "error", "message": str(e)}
+
+
+# OTP Storage (in production, use Redis or database)
+otp_storage = {}
+
+def send_otp(phone):
+    """Send OTP to phone via WhatsApp"""
+    # Generate 6-digit OTP
+    otp = str(random.randint(100000, 999999))
+    
+    # Store OTP (in production, use Redis with TTL)
+    otp_storage[phone] = otp
+    
+    print(f"\n📱 SENDING OTP TO: +91 {phone}")
+    print(f"🔢 OTP GENERATED: {otp}")
+    
+    # TODO: Integrate with actual WhatsApp API (Twilio, MessageBird, etc.)
+    # For now, just log it
+    
+    try:
+        # Placeholder for WhatsApp API integration
+        # Example with Twilio:
+        # from twilio.rest import Client
+        # client = Client(account_sid, auth_token)
+        # message = client.messages.create(
+        #     from_='whatsapp:+14155238886',
+        #     body=f'Your Amogh Buildtech verification code is: {otp}',
+        #     to=f'whatsapp:+91{phone}'
+        # )
+        
+        print(f"✅ OTP sent successfully (simulated)")
+        return {
+            "status": "success",
+            "message": "OTP sent to WhatsApp",
+            "otp": otp  # Remove this in production!
+        }
+    
+    except Exception as e:
+        print(f"❌ Failed to send OTP: {str(e)}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+def verify_otp(phone, otp):
+    """Verify OTP for phone number"""
+    print(f"\n🔍 VERIFYING OTP")
+    print(f"   Phone: {phone}")
+    print(f"   OTP Entered: {otp}")
+    
+    stored_otp = otp_storage.get(phone)
+    
+    if not stored_otp:
+        print("❌ No OTP found for this number")
+        return {
+            "status": "error",
+            "message": "No OTP found. Please request a new one."
+        }
+    
+    if stored_otp == otp:
+        # Clear OTP after successful verification
+        del otp_storage[phone]
+        print("✅ OTP verified successfully")
+        return {
+            "status": "success",
+            "message": "Phone number verified successfully"
+        }
+    else:
+        print(f"❌ OTP mismatch. Expected: {stored_otp}, Got: {otp}")
+        return {
+            "status": "error",
+            "message": "Invalid OTP. Please try again."
+        }

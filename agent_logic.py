@@ -1,6 +1,6 @@
 # agent_logic.py
 from openai import OpenAI
-from tools import get_projects, add_lead_to_crm
+from tools import get_projects, add_lead_to_crm, send_otp, verify_otp
 from system_prompt import SYSTEM_PROMPT
 import json
 import re
@@ -12,14 +12,24 @@ client = OpenAI()
 # -----------------------
 
 conversation_history = []
+conversation_stage = "INITIAL"  # INITIAL, NAME_COLLECTED, PHONE_COLLECTED, OTP_SENT, VERIFIED, REQUIREMENT_GATHERING
 
 lead_data = {
+    "customer_type": None,  # "existing" or "new"
     "name": None,
     "phone": None,
+    "phone_verified": False,
+    "otp_sent": False,
     "interested_project_id": None,
     "interested_project_name": None,
     "lead_submitted": False,
-    "conversation_remarks": []
+    "conversation_remarks": [],
+    "requirements": {
+        "purpose": None,
+        "budget": None,
+        "possession": None,
+        "configuration": None
+    }
 }
 
 # =========================
@@ -28,7 +38,7 @@ lead_data = {
 def extract_name_from_message(message):
     """Extract name from user message"""
     words = message.strip().split()
-    common_phrases = ['hi', 'hello', 'yes', 'no', 'okay', 'sure', 'haan', 'nahi', 'my', 'name', 'is']
+    common_phrases = ['hi', 'hello', 'yes', 'no', 'okay', 'sure', 'my', 'name', 'is', 'i', 'am', 'the']
     
     # Filter out common phrases
     potential_name = ' '.join([w for w in words if w.lower() not in common_phrases])
@@ -37,9 +47,13 @@ def extract_name_from_message(message):
         return potential_name.strip().title()
     
     # Try regex pattern
-    match = re.search(r"my name is (\w+(?:\s+\w+)?)", message, re.IGNORECASE)
+    match = re.search(r"(?:my name is|i am|i'm|this is) (\w+(?:\s+\w+)?)", message, re.IGNORECASE)
     if match:
         return match.group(1).title()
+    
+    # If message is just a name (single or two words)
+    if len(words) <= 2 and all(w[0].isupper() or w.lower() not in common_phrases for w in words):
+        return message.strip().title()
     
     return None
 
@@ -60,12 +74,6 @@ def extract_phone_from_message(message):
     if len(digits) == 10:
         print(f"✅ Valid phone extracted: {digits}")
         return digits
-    
-    # Check if more than 10 digits, take last 10
-    if len(digits) > 10:
-        phone = digits[-10:]
-        print(f"✅ Valid phone extracted (last 10 digits): {phone}")
-        return phone
     
     print(f"❌ Invalid phone: {digits} (length: {len(digits)})")
     return None
@@ -92,17 +100,13 @@ def extract_project_interest(message, projects_str):
     
     return None
 
-def extract_project_from_ai_response(ai_text, projects_str):
-    """Extract project from AI response"""
-    ai_text_lower = ai_text.lower()
-    projects = safe_parse_projects(projects_str)
-    
-    for p in projects:
-        pname = p.get("name", "").lower()
-        if pname and pname in ai_text_lower:
-            print(f"🎯 Project detected in AI response: {p.get('name')}")
-            return {"id": p.get("id"), "name": p.get("name")}
-    
+def check_customer_type(message):
+    """Check if user selected customer type"""
+    message_lower = message.lower()
+    if "existing" in message_lower or "already" in message_lower or "client" in message_lower:
+        return "existing"
+    elif "new" in message_lower or "guest" in message_lower or "first time" in message_lower:
+        return "new"
     return None
 
 def check_and_submit_lead():
@@ -111,8 +115,8 @@ def check_and_submit_lead():
     print("🔍 CHECKING LEAD SUBMISSION CONDITIONS:")
     print(f"   Name: {lead_data['name']}")
     print(f"   Phone: {lead_data['phone']}")
+    print(f"   Phone Verified: {lead_data['phone_verified']}")
     print(f"   Project ID: {lead_data['interested_project_id']}")
-    print(f"   Project Name: {lead_data['interested_project_name']}")
     print(f"   Already Submitted: {lead_data['lead_submitted']}")
     print("="*60)
     
@@ -120,25 +124,15 @@ def check_and_submit_lead():
     if (
         lead_data["name"] and 
         lead_data["phone"] and 
+        lead_data["phone_verified"] and
         lead_data["interested_project_id"] and 
         not lead_data["lead_submitted"]
     ):
         print("\n✅ ALL CONDITIONS MET - SUBMITTING LEAD TO CRM...")
         
         # Prepare remarks
-        remarks = " | ".join(lead_data["conversation_remarks"]) if lead_data["conversation_remarks"] else "Customer showed interest via AI chatbot"
-        
-        # Prepare payload for debugging
-        payload = {
-            "name": lead_data["name"],
-            "phone": lead_data["phone"],
-            "project_id": lead_data["interested_project_id"],
-            "project_name": lead_data["interested_project_name"],
-            "remarks": remarks
-        }
-        
-        print("\n📦 CRM PAYLOAD:")
-        print(json.dumps(payload, indent=2))
+        requirements_text = ", ".join([f"{k}: {v}" for k, v in lead_data["requirements"].items() if v])
+        remarks = " | ".join(lead_data["conversation_remarks"]) + f" | Requirements: {requirements_text}"
         
         # Call CRM API
         result = add_lead_to_crm(
@@ -148,63 +142,81 @@ def check_and_submit_lead():
             remarks=remarks
         )
         
-        print("\n📨 CRM API RESPONSE:")
-        print(json.dumps(result, indent=2))
-        
-        # Check result
         if result.get("status") == "success":
             lead_data["lead_submitted"] = True
             print("\n🎉 ✅ LEAD SUCCESSFULLY SUBMITTED TO CRM!")
             return True
         else:
-            print(f"\n❌ LEAD SUBMISSION FAILED!")
-            print(f"Error: {result.get('message', 'Unknown error')}")
+            print(f"\n❌ LEAD SUBMISSION FAILED: {result.get('message')}")
             return False
     else:
         print("\n⏳ CONDITIONS NOT MET YET - WAITING FOR MORE INFO...")
-        if not lead_data["name"]:
-            print("   ❌ Missing: Name")
-        if not lead_data["phone"]:
-            print("   ❌ Missing: Phone")
-        if not lead_data["interested_project_id"]:
-            print("   ❌ Missing: Project Interest")
-        if lead_data["lead_submitted"]:
-            print("   ℹ️ Lead already submitted")
-        print("="*60 + "\n")
         return False
 
 # =========================
 # MAIN CONVERSATION
 # =========================
 def run_conversation(user_prompt):
-    global conversation_history, lead_data
+    global conversation_history, lead_data, conversation_stage
 
     print(f"\n{'='*60}")
-    print(f"👤 USER MESSAGE: {user_prompt}")
+    print(f"💤 USER MESSAGE: {user_prompt}")
+    print(f"📍 CURRENT STAGE: {conversation_stage}")
     print(f"{'='*60}\n")
 
     projects = get_projects("")  # dynamic fetch
 
-    # ----------------- EXTRACT INFO -----------------
-    print("🔍 EXTRACTING INFORMATION FROM USER MESSAGE...\n")
+    # ----------------- STAGE MANAGEMENT -----------------
+    
+    # Check for customer type selection
+    if conversation_stage == "INITIAL":
+        customer_type = check_customer_type(user_prompt)
+        if customer_type:
+            lead_data["customer_type"] = customer_type
+            conversation_stage = "CUSTOMER_TYPE_SELECTED"
     
     # Extract Name
-    if not lead_data["name"]:
+    if conversation_stage in ["CUSTOMER_TYPE_SELECTED", "NAME_REQUEST"] and not lead_data["name"]:
         name = extract_name_from_message(user_prompt)
         if name:
             lead_data["name"] = name
             lead_data["conversation_remarks"].append(f"Name: {name}")
+            conversation_stage = "NAME_COLLECTED"
             print(f"✅ Name captured: {name}")
 
     # Extract Phone
-    if not lead_data["phone"]:
+    if conversation_stage == "PHONE_REQUEST" and not lead_data["phone"]:
         phone = extract_phone_from_message(user_prompt)
         if phone:
             lead_data["phone"] = phone
             lead_data["conversation_remarks"].append(f"Phone: {phone}")
+            conversation_stage = "PHONE_COLLECTED"
             print(f"✅ Phone captured: {phone}")
+            
+            # Trigger OTP sending
+            otp_result = send_otp(phone)
+            if otp_result.get("status") == "success":
+                lead_data["otp_sent"] = True
+                conversation_stage = "OTP_SENT"
+        elif len(user_prompt.replace(" ", "").replace("-", "")) < 10:
+            # Invalid phone detected
+            conversation_stage = "PHONE_INVALID"
 
-    # Extract Project Interest from user message
+    # Check for OTP in message
+    if conversation_stage == "OTP_SENT" and lead_data["phone"]:
+        # Extract OTP (6 digits typically)
+        otp_match = re.search(r'\b\d{4,6}\b', user_prompt)
+        if otp_match:
+            otp = otp_match.group()
+            verify_result = verify_otp(lead_data["phone"], otp)
+            if verify_result.get("status") == "success":
+                lead_data["phone_verified"] = True
+                conversation_stage = "VERIFIED"
+                print(f"✅ Phone verified successfully")
+            else:
+                conversation_stage = "OTP_INVALID"
+
+    # Extract Project Interest
     if not lead_data["interested_project_id"]:
         project = extract_project_interest(user_prompt, projects)
         if project:
@@ -213,18 +225,32 @@ def run_conversation(user_prompt):
             lead_data["conversation_remarks"].append(f"Interested in: {project['name']}")
             print(f"✅ Project interest captured: {project['name']}")
 
+    # Extract Requirements from options selected
+    if "residential" in user_prompt.lower() or "investment" in user_prompt.lower() or "commercial" in user_prompt.lower():
+        lead_data["requirements"]["purpose"] = user_prompt
+    if "lakh" in user_prompt.lower() or "cr" in user_prompt.lower():
+        lead_data["requirements"]["budget"] = user_prompt
+    if "ready" in user_prompt.lower() or "year" in user_prompt.lower():
+        lead_data["requirements"]["possession"] = user_prompt
+    if "bhk" in user_prompt.lower() or "studio" in user_prompt.lower():
+        lead_data["requirements"]["configuration"] = user_prompt
+
     # ----------------- SYSTEM PROMPT -----------------
     system_prompt = SYSTEM_PROMPT.format(
         name=lead_data.get('name', 'NOT CAPTURED'),
         phone=lead_data.get('phone', 'NOT CAPTURED'),
+        phone_verified=lead_data.get('phone_verified', False),
         project_name=lead_data.get('interested_project_name', 'NOT IDENTIFIED'),
         lead_submitted=lead_data.get('lead_submitted', False),
-        projects=json.dumps(projects)
+        projects=json.dumps(projects, indent=2)
     )
 
     if not conversation_history:
         conversation_history.append({"role": "system", "content": system_prompt})
-    conversation_history.append({"role": "user", "content": user_prompt})
+    
+    # Add stage context to user message
+    context_message = f"[STAGE: {conversation_stage}] {user_prompt}"
+    conversation_history.append({"role": "user", "content": context_message})
 
     # ----------------- AI CALL -----------------
     print("\n🤖 CALLING AI MODEL...\n")
@@ -237,15 +263,6 @@ def run_conversation(user_prompt):
         ai_reply = response.choices[0].message.content
         print(f"🤖 AI RESPONSE: {ai_reply}\n")
 
-        # ----------------- PROJECT AUTO-DETECT FROM AI RESPONSE -----------------
-        if not lead_data["interested_project_id"]:
-            detected = extract_project_from_ai_response(ai_reply, projects)
-            if detected:
-                lead_data["interested_project_id"] = detected["id"]
-                lead_data["interested_project_name"] = detected["name"]
-                lead_data["conversation_remarks"].append(f"Interested in: {detected['name']}")
-                print(f"✅ Project detected from AI response: {detected['name']}")
-
         # ----------------- AUTO CRM SUBMIT -----------------
         check_and_submit_lead()
 
@@ -257,7 +274,7 @@ def run_conversation(user_prompt):
             ai_reply = json.dumps({
                 "blocks": [{
                     "component": "Text",
-                    "props": {"text": "⚠️ Kuch technical issue aa gaya hai. Please try again."}
+                    "props": {"text": ai_reply}
                 }]
             })
 
@@ -269,6 +286,6 @@ def run_conversation(user_prompt):
         return json.dumps({
             "blocks": [{
                 "component": "Text",
-                "props": {"text": f"⚠️ Kuch technical issue aa gaya hai: {str(e)}"}
+                "props": {"text": f"I apologize, but I'm experiencing a technical issue. Please try again or call us at **+91 92500-94500**."}
             }]
         })
