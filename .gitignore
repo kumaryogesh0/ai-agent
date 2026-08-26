@@ -4,3 +4,6 @@ __pycache__/
 *.pycvenv/
 .env
 __pycache__/
+
+*.bak
+conversation_logs.json

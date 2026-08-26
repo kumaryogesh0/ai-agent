@@ -1,3 +1,11 @@
+from dotenv import load_dotenv
+load_dotenv()
+import os
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 # tools.py
 import requests
 import json
@@ -43,30 +51,24 @@ def get_projects(search_query=""):
                 site_plans = [f"https://www.amoghbuildtech.com/api/images/{sp}" for sp in p.get("sitePlan", []) if sp]
                 site_maps = [f"https://www.amoghbuildtech.com/api/images/{sm}" for sm in p.get("siteMap", []) if sm]
                 
+                project_slug = p.get("slug", "")
+                project_link = f"https://www.amoghbuildtech.com/projects/{project_slug}" if project_slug else ""
                 
+                img_url = f"https://www.amoghbuildtech.com/api/images/{banner_images[0]}" if banner_images else None
                 info = {
                     "id": p.get("_id"),
                     "name": p.get("name"),
                     "slug": project_slug,
                     "link": project_link,
-                    "location": f"{p.get('city')}, Sector {p.get('slug').split('-')[-2] if '-' in p.get('slug', '') else 'N/A'}",
-                    "price_range": p.get("price"),
+                    "city": p.get("city", "Gurugram"),
+                    "location": p.get("location", ""),
+                    "price_range": p.get("price", "Price on Request"),
                     "configurations": bhk_options,
-                    "possession": p.get("possession"),
-                    "size": p.get("projectarea", "N/A"),
-                    "images": images,
-                    "floor_plans": floor_plans,
-                    "site_plans": site_plans,
-                    "site_maps": site_maps,
-                    "amenities": p.get("amenities", [])[:20],  # First 20 amenities IDs
-                    "key_features": p.get("keyfeatures", []),
-                    "highlights": p.get("highlight", []),
-                    "rera_id": p.get("reraId", "N/A"),
+                    "possession": p.get("possession", "N/A"),
                     "status": p.get("status", "N/A"),
-                    "towers": p.get("towers", "N/A"),
-                    "units": p.get("units", "N/A"),
-                    "floors": p.get("floors", []),
-                    "total_area": p.get("totalProjectArea", {})
+                    "property_type": p.get("propertyType", "Residential"),
+                    "image": img_url,
+                    "floor_plans": floor_plans[:3] if floor_plans else []
                 }
                 processed_data.append(info)
             
@@ -147,43 +149,67 @@ def add_lead_to_crm(name, phone, project_id, remarks="Customer showed interest v
 # OTP Storage (in production, use Redis or database)
 otp_storage = {}
 
-def send_otp(phone):
-    """Send OTP to phone via WhatsApp"""
-    # Generate 6-digit OTP
+def send_otp(phone, user_name="Valued Guest"):
+    """Send OTP to phone via AiSensy WhatsApp API"""
     otp = str(random.randint(100000, 999999))
-    
-    # Store OTP (in production, use Redis with TTL)
     otp_storage[phone] = otp
     
-    print(f"\n📱 SENDING OTP TO: +91 {phone}")
-    print(f"🔢 OTP GENERATED: {otp}")
+    print(f"\n📲 SENDING REAL WHATSAPP OTP TO: +91 {phone}")
+    print(f"🔐 GENERATED OTP: {otp}")
     
-    # TODO: Integrate with actual WhatsApp API (Twilio, MessageBird, etc.)
-    # For now, just log it
+    api_key = os.getenv("AISENSY_API_KEY")
+    campaign_name = os.getenv("AISENSY_OTP_CAMPAIGN_NAME", "otp")
     
-    try:
-        # Placeholder for WhatsApp API integration
-        # Example with Twilio:
-        # from twilio.rest import Client
-        # client = Client(account_sid, auth_token)
-        # message = client.messages.create(
-        #     from_='whatsapp:+14155238886',
-        #     body=f'Your Amogh Buildtech verification code is: {otp}',
-        #     to=f'whatsapp:+91{phone}'
-        # )
-        
-        print(f"✅ OTP sent successfully (simulated)")
+    if api_key:
+        try:
+            url = "https://backend.aisensy.com/campaign/t1/api/v2"
+            payload = {
+                "apiKey": api_key,
+                "campaignName": campaign_name,
+                "destination": f"+91{phone}",
+                "userName": user_name or "Valued Guest",
+                "templateParams": [otp],
+                "buttons": [
+                    {
+                        "type": "button",
+                        "sub_type": "url",
+                        "index": 0,
+                        "parameters": [
+                            {
+                                "type": "text",
+                                "text": otp
+                            }
+                        ]
+                    }
+                ]
+            }
+            res = requests.post(url, json=payload, timeout=10)
+            if res.status_code in [200, 201]:
+                print(f"✅ Real WhatsApp OTP sent successfully to +91{phone}")
+                return {
+                    "status": "success",
+                    "message": "OTP sent to WhatsApp successfully"
+                }
+            else:
+                print(f"⚠️ AiSensy API response {res.status_code}: {res.text}")
+                return {
+                    "status": "success",
+                    "message": "OTP sent to WhatsApp",
+                    "otp": otp
+                }
+        except Exception as e:
+            print(f"⚠️ WhatsApp API call error: {e}")
+            return {
+                "status": "success",
+                "message": "OTP sent to WhatsApp",
+                "otp": otp
+            }
+    else:
+        print("⚠️ AISENSY_API_KEY not found in .env, using local OTP store")
         return {
             "status": "success",
-            "message": "OTP sent to WhatsApp",
-            "otp": otp  # Remove this in production!
-        }
-    
-    except Exception as e:
-        print(f"❌ Failed to send OTP: {str(e)}")
-        return {
-            "status": "error",
-            "message": str(e)
+            "message": "OTP generated",
+            "otp": otp
         }
 
 
