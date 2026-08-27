@@ -12,11 +12,10 @@ import json
 import random
 
 def get_projects(search_query=""):
-    """Fetch all projects from API"""
+    """Fetch all projects from API with accurate slugs and links"""
     url = f"https://www.amoghbuildtech.com/api/projects?search={search_query}&page=1&pageSize=1000&propertyCategory=All&country=india&isComplete=true&priceRange=all"
     
     try:
-        print("📄 Fetching projects from API...")
         response = requests.get(url, timeout=10)
         
         if response.status_code == 200:
@@ -24,39 +23,21 @@ def get_projects(search_query=""):
             projects = raw_data.get("data", [])
             
             if not projects:
-                print("⚠️ No projects found")
-                return "No projects found matching your criteria."
+                return []
             
             processed_data = []
             for p in projects:
                 bhk_options = [b.get("bhktype") for b in p.get("typebhk", [])]
                 
-                # Extract images from bannerimg array
-                images = []
                 banner_images = p.get("bannerimg", [])
-                for img_name in banner_images[:8]:  # Get up to 8 images
-                    if img_name:
-                        # Direct API URL without Next.js image optimization
-                        images.append(f"https://www.amoghbuildtech.com/api/images/{img_name}")
-                
-                # Also get floor plans, site plans, and site maps
-                floor_plans = []
-                for fp in p.get("typebhk", []):
-                    if fp.get("img"):
-                        floor_plans.append({
-                            "type": fp.get("bhktype"),
-                            "url": f"https://www.amoghbuildtech.com/api/images/{fp['img']}"
-                        })
-                
-                site_plans = [f"https://www.amoghbuildtech.com/api/images/{sp}" for sp in p.get("sitePlan", []) if sp]
-                site_maps = [f"https://www.amoghbuildtech.com/api/images/{sm}" for sm in p.get("siteMap", []) if sm]
-                
-                project_slug = p.get("slug", "")
-                project_link = f"https://www.amoghbuildtech.com/projects/{project_slug}" if project_slug else ""
-                
                 img_url = f"https://www.amoghbuildtech.com/api/images/{banner_images[0]}" if banner_images else None
+                
+                # Real MongoDB slug or fallback to _id
+                project_slug = p.get("slug") or str(p.get("_id"))
+                project_link = f"https://www.amoghbuildtech.com/projects/{project_slug}"
+                
                 info = {
-                    "id": p.get("_id"),
+                    "id": str(p.get("_id")),
                     "name": p.get("name"),
                     "slug": project_slug,
                     "link": project_link,
@@ -67,20 +48,18 @@ def get_projects(search_query=""):
                     "possession": p.get("possession", "N/A"),
                     "status": p.get("status", "N/A"),
                     "property_type": p.get("propertyType", "Residential"),
-                    "image": img_url,
-                    "floor_plans": floor_plans[:3] if floor_plans else []
+                    "image": img_url
                 }
                 processed_data.append(info)
             
-            print(f"✅ Successfully fetched {len(processed_data)} projects")
-            return str(processed_data)
+            return processed_data
         else:
             print(f"❌ API Error: Status {response.status_code}")
-            return "Error: API not responding."
+            return []
             
     except Exception as e:
         print(f"❌ Network Error: {str(e)}")
-        return f"Network Error: {str(e)}"
+        return []
 
 
 def add_lead_to_crm(name, phone, project_id, remarks="Customer showed interest via AI chatbot"):

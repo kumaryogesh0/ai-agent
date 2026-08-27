@@ -1,3 +1,26 @@
+def is_valid_person_name(text: str) -> bool:
+    """Validate that text is genuinely a person's name and not an inquiry sentence"""
+    text = text.strip()
+    words = text.split()
+    if not (1 <= len(words) <= 4):
+        return False
+    intent_words = {
+        'want', 'need', 'looking', 'look', 'invest', 'investment', 'buy', 'purchase',
+        'sell', 'rent', 'commercial', 'residential', 'complex', 'project', 'projects',
+        'apartment', 'apartments', 'flat', 'flats', 'shop', 'shops', 'office',
+        'plot', 'plots', 'bhk', '1bhk', '2bhk', '3bhk', '4bhk', 'studio',
+        'gurgaon', 'gurugram', 'noida', 'delhi', 'price', 'budget', 'cost',
+        'ready', 'possession', 'call', 'callback', 'contact', 'help', 'hi', 'hello',
+        'hey', 'yes', 'no', 'brochure', 'details', 'detail', 'info', 'information',
+        'existing', 'client', 'new', 'guest', 'explore', 'request'
+    }
+    for w in words:
+        clean_w = re.sub(r'[^a-zA-Z]', '', w.lower())
+        if clean_w in intent_words:
+            return False
+    return all(w.replace('.', '').isalpha() for w in words)
+
+
 import sys
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -207,6 +230,24 @@ def run_conversation(user_prompt, session_id="default"):
 
     # ----------------- STAGE MANAGEMENT -----------------
     
+    # Extract Requirements mentioned anytime in conversation
+    prompt_lower = user_prompt.lower()
+    if "commercial" in prompt_lower:
+        lead_data["requirements"]["purpose"] = "Commercial Property"
+    elif "residential" in prompt_lower or "flat" in prompt_lower or "apartment" in prompt_lower or "villa" in prompt_lower:
+        lead_data["requirements"]["purpose"] = "Residential"
+    elif "invest" in prompt_lower or "investment" in prompt_lower:
+        lead_data["requirements"]["purpose"] = "Investment"
+
+    if "lakh" in prompt_lower or "cr" in prompt_lower or "crore" in prompt_lower:
+        lead_data["requirements"]["budget"] = user_prompt
+    if "ready" in prompt_lower or "year" in prompt_lower or "possession" in prompt_lower:
+        lead_data["requirements"]["possession"] = user_prompt
+    if "bhk" in prompt_lower or "studio" in prompt_lower:
+        lead_data["requirements"]["configuration"] = user_prompt
+    elif "shop" in prompt_lower or "office" in prompt_lower or "sco" in prompt_lower or "food court" in prompt_lower:
+        lead_data["requirements"]["configuration"] = user_prompt
+
     # Check for customer type selection
     if conversation_stage == "INITIAL":
         customer_type = check_customer_type(user_prompt)
@@ -215,15 +256,18 @@ def run_conversation(user_prompt, session_id="default"):
             conversation_stage = "CUSTOMER_TYPE_SELECTED"
             print(f"✅ Customer type captured: {customer_type}")
     
-    # Extract Name: When AI asked for name in previous step, this user message IS their direct full name!
+    # Extract Name: Only if the user message is genuinely a person's name
     elif conversation_stage in ["CUSTOMER_TYPE_SELECTED", "NAME_REQUEST"]:
-        # Clean user message directly as name
-        clean_name = user_prompt.strip().title()
-        if clean_name and len(clean_name) >= 2:
+        if is_valid_person_name(user_prompt):
+            clean_name = user_prompt.strip().title()
             lead_data["name"] = clean_name
             lead_data["conversation_remarks"].append(f"Name: {clean_name}")
             conversation_stage = "NAME_COLLECTED"
             print(f"✅ Name captured directly from user response: {clean_name}")
+        else:
+            # User entered requirement / question instead of name
+            lead_data["conversation_remarks"].append(f"Inquiry: {user_prompt}")
+            print(f"ℹ️ User provided inquiry instead of name: {user_prompt}")
 
     # Extract Phone
     if (conversation_stage in ["PHONE_REQUEST", "NAME_COLLECTED"] or not lead_data["phone"]) and not lead_data["phone_verified"]:
