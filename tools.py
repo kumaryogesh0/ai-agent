@@ -12,7 +12,7 @@ import json
 import random
 
 def get_projects(search_query=""):
-    """Fetch all projects from API with accurate slugs and links"""
+    """Fetch all Gurgaon projects from API with accurate slugs and links"""
     url = f"https://www.amoghbuildtech.com/api/projects?search={search_query}&page=1&pageSize=1000&propertyCategory=All&country=india&isComplete=true&priceRange=all"
     
     try:
